@@ -18,6 +18,13 @@ const instrument = Instrument_Serif({
 export const metadata: Metadata = {
   title: "캡슐 미",
   description: "사진과 편지를 묻고, 열람일에 함께 열어요",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "32x32" },
+      { url: "/icon", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-icon", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
