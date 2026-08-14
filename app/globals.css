@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-outfit), ui-sans-serif, system-ui, -apple-system,
+    "Apple SD Gothic Neo", sans-serif;
+  --font-serif: var(--font-instrument), ui-serif, "Apple SD Gothic Neo", serif;
+  --color-canvas: #f3efe8;
+  --color-ink: #1c1917;
+  --color-mute: #78716c;
+  --color-line: rgb(28 25 23 / 0.08);
+  --ease-apple: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+html,
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+.font-serif {
+  font-family: var(--font-serif);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(220%);
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.rise {
+  animation: rise 800ms var(--ease-apple) both;
+}
+
+.shimmer-bar {
+  animation: shimmer 1.4s var(--ease-apple) infinite;
+}
+
+.pulse-soft {
+  animation: pulse-soft 1.8s var(--ease-apple) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .shimmer-bar,
+  .pulse-soft {
+    animation: none;
+  }
+}

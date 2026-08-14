@@ -1,0 +1,78 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: capsules
+// Document ID: auto-id
+// Fields:
+//   - recipient: string (required, 0-80)
+//   - letter: string (required, 0-5000)
+//   - openDate: string (required, empty or YYYY-MM-DD)
+//   - photos: list of maps { path: string, url: string } (required, 0-10)
+//             path maps to Storage object capsules/{ownerUid}/{capsuleId}/...
+//   - ownerUid: string (required, immutable) - Firebase Auth uid
+//   - createdAt: timestamp (required)
+//
+// Access: owner can create and read. No client updates or deletes.
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function isValidPhoto(photo) {
+      return photo.keys().hasOnly(['path', 'url'])
+        && photo.path is string
+        && photo.path.size() > 0
+        && photo.path.size() < 500
+        && photo.path.matches('^capsules/' + request.auth.uid + '/.*')
+        && photo.url is string
+        && photo.url.size() < 2000
+        && photo.url.matches('^https://.*');
+    }
+
+    function photosAreValid(photos) {
+      return photos is list
+        && photos.size() <= 10
+        && (photos.size() == 0
+          || (photos.size() == 1 && isValidPhoto(photos[0]))
+          || (photos.size() == 2 && isValidPhoto(photos[0]) && isValidPhoto(photos[1]))
+          || (photos.size() == 3 && isValidPhoto(photos[0]) && isValidPhoto(photos[1]) && isValidPhoto(photos[2]))
+          || (photos.size() == 4 && isValidPhoto(photos[0]) && isValidPhoto(photos[1]) && isValidPhoto(photos[2]) && isValidPhoto(photos[3]))
+          || (photos.size() == 5 && isValidPhoto(photos[0]) && isValidPhoto(photos[1]) && isValidPhoto(photos[2]) && isValidPhoto(photos[3]) && isValidPhoto(photos[4]))
+          || (photos.size() == 6 && isValidPhoto(photos[0]) && isValidPhoto(photos[1]) && isValidPhoto(photos[2]) && isValidPhoto(photos[3]) && isValidPhoto(photos[4]) && isValidPhoto(photos[5]))
+          || (photos.size() == 7 && isValidPhoto(photos[0]) && isValidPhoto(photos[1]) && isValidPhoto(photos[2]) && isValidPhoto(photos[3]) && isValidPhoto(photos[4]) && isValidPhoto(photos[5]) && isValidPhoto(photos[6]))
+          || (photos.size() == 8 && isValidPhoto(photos[0]) && isValidPhoto(photos[1]) && isValidPhoto(photos[2]) && isValidPhoto(photos[3]) && isValidPhoto(photos[4]) && isValidPhoto(photos[5]) && isValidPhoto(photos[6]) && isValidPhoto(photos[7]))
+          || (photos.size() == 9 && isValidPhoto(photos[0]) && isValidPhoto(photos[1]) && isValidPhoto(photos[2]) && isValidPhoto(photos[3]) && isValidPhoto(photos[4]) && isValidPhoto(photos[5]) && isValidPhoto(photos[6]) && isValidPhoto(photos[7]) && isValidPhoto(photos[8]))
+          || (photos.size() == 10 && isValidPhoto(photos[0]) && isValidPhoto(photos[1]) && isValidPhoto(photos[2]) && isValidPhoto(photos[3]) && isValidPhoto(photos[4]) && isValidPhoto(photos[5]) && isValidPhoto(photos[6]) && isValidPhoto(photos[7]) && isValidPhoto(photos[8]) && isValidPhoto(photos[9])));
+    }
+
+    function isValidCapsule(data) {
+      return data.keys().hasOnly(['recipient', 'letter', 'openDate', 'photos', 'ownerUid', 'createdAt'])
+        && data.recipient is string
+        && data.recipient.size() <= 80
+        && data.letter is string
+        && data.letter.size() <= 5000
+        && data.openDate is string
+        && (data.openDate.size() == 0 || data.openDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))
+        && photosAreValid(data.photos)
+        && data.ownerUid is string
+        && data.ownerUid == request.auth.uid
+        && data.createdAt is timestamp;
+    }
+
+    match /capsules/{capsuleId} {
+      allow read: if isAuthenticated() && isOwner(resource.data.ownerUid);
+      allow create: if isAuthenticated() && isValidCapsule(request.resource.data);
+      allow update, delete: if false;
+    }
+  }
+}
