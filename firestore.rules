@@ -14,8 +14,26 @@ rules_version = '2';
 //             path maps to Storage object capsules/{ownerUid}/{capsuleId}/...
 //   - ownerUid: string (required, immutable) - Firebase Auth uid
 //   - createdAt: timestamp (required)
+//   - weather: map { condition, temperature, humidity, source, capturedAt }
+//   - aura: map { quote, keywords, shape, fill, accent, glow }
 //
 // Access: owner can create and read. No client updates or deletes.
+//
+// Collection: stats
+// Document ID: public
+// Fields:
+//   - buriedCount: number (>= 1) - total capsules buried
+//   - makerCount: number (>= 0, <= buriedCount) - unique people who buried
+//
+// Access: anyone can read (social proof on the landing). Authenticated
+// clients may create the first doc as 1/1, then only increment counts.
+//
+// Collection: makers
+// Document ID: Firebase Auth uid
+// Fields:
+//   - createdAt: timestamp
+//
+// Access: that user can read and create once. No updates or deletes.
 // ===============================================================
 
 service cloud.firestore {
@@ -55,8 +73,80 @@ service cloud.firestore {
           || (photos.size() == 10 && isValidPhoto(photos[0]) && isValidPhoto(photos[1]) && isValidPhoto(photos[2]) && isValidPhoto(photos[3]) && isValidPhoto(photos[4]) && isValidPhoto(photos[5]) && isValidPhoto(photos[6]) && isValidPhoto(photos[7]) && isValidPhoto(photos[8]) && isValidPhoto(photos[9])));
     }
 
+    function isHex(color) {
+      return color is string && color.matches('^#[0-9A-Fa-f]{6}$');
+    }
+
+    function isValidKeyword(keyword) {
+      return keyword is string && keyword.size() > 0 && keyword.size() <= 16;
+    }
+
+    function keywordsAreValid(keywords) {
+      return keywords is list
+        && keywords.size() > 0
+        && keywords.size() <= 5
+        && (keywords.size() == 1 && isValidKeyword(keywords[0])
+          || keywords.size() == 2 && isValidKeyword(keywords[0]) && isValidKeyword(keywords[1])
+          || keywords.size() == 3 && isValidKeyword(keywords[0]) && isValidKeyword(keywords[1]) && isValidKeyword(keywords[2])
+          || keywords.size() == 4 && isValidKeyword(keywords[0]) && isValidKeyword(keywords[1]) && isValidKeyword(keywords[2]) && isValidKeyword(keywords[3])
+          || keywords.size() == 5 && isValidKeyword(keywords[0]) && isValidKeyword(keywords[1]) && isValidKeyword(keywords[2]) && isValidKeyword(keywords[3]) && isValidKeyword(keywords[4]));
+    }
+
+    function isValidWeather(weather) {
+      return weather is map
+        && weather.keys().hasOnly(['condition', 'temperature', 'humidity', 'source', 'capturedAt'])
+        && weather.condition is string
+        && weather.condition.size() > 0
+        && weather.condition.size() <= 40
+        && weather.temperature is number
+        && weather.temperature >= -80
+        && weather.temperature <= 80
+        && weather.humidity is number
+        && weather.humidity >= 0
+        && weather.humidity <= 100
+        && weather.source in ['kma', 'open-meteo']
+        && weather.capturedAt is string
+        && weather.capturedAt.size() > 0
+        && weather.capturedAt.size() <= 40;
+    }
+
+    function isValidAura(aura) {
+      return aura is map
+        && aura.keys().hasOnly(['quote', 'keywords', 'shape', 'fill', 'accent', 'glow'])
+        && aura.quote is string
+        && aura.quote.size() > 0
+        && aura.quote.size() <= 48
+        && keywordsAreValid(aura.keywords)
+        && aura.shape in ['orb', 'drop', 'crystal', 'cloud', 'petal', 'shard']
+        && isHex(aura.fill)
+        && isHex(aura.accent)
+        && isHex(aura.glow);
+    }
+
+    function isValidStats(data) {
+      return data.keys().hasOnly(['buriedCount', 'makerCount'])
+        && data.buriedCount is number
+        && data.buriedCount >= 1
+        && data.makerCount is number
+        && data.makerCount >= 0
+        && data.makerCount <= data.buriedCount;
+    }
+
+    function isStatsIncrement() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['buriedCount', 'makerCount'])
+        && request.resource.data.buriedCount == resource.data.buriedCount + 1
+        && request.resource.data.makerCount >= resource.data.makerCount
+        && request.resource.data.makerCount <= resource.data.makerCount + 1
+        && isValidStats(request.resource.data);
+    }
+
+    function isValidMaker(data) {
+      return data.keys().hasOnly(['createdAt'])
+        && data.createdAt is timestamp;
+    }
+
     function isValidCapsule(data) {
-      return data.keys().hasOnly(['recipient', 'letter', 'openDate', 'photos', 'ownerUid', 'createdAt'])
+      return data.keys().hasOnly(['recipient', 'letter', 'openDate', 'photos', 'ownerUid', 'createdAt', 'weather', 'aura'])
         && data.recipient is string
         && data.recipient.size() <= 80
         && data.letter is string
@@ -66,12 +156,34 @@ service cloud.firestore {
         && photosAreValid(data.photos)
         && data.ownerUid is string
         && data.ownerUid == request.auth.uid
-        && data.createdAt is timestamp;
+        && data.createdAt is timestamp
+        && isValidWeather(data.weather)
+        && isValidAura(data.aura);
     }
 
     match /capsules/{capsuleId} {
       allow read: if isAuthenticated() && isOwner(resource.data.ownerUid);
       allow create: if isAuthenticated() && isValidCapsule(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    match /stats/{docId} {
+      allow read: if docId == 'public';
+      allow create: if docId == 'public'
+        && isAuthenticated()
+        && isValidStats(request.resource.data)
+        && request.resource.data.buriedCount == 1
+        && request.resource.data.makerCount == 1;
+      allow update: if docId == 'public'
+        && isAuthenticated()
+        && isValidStats(request.resource.data)
+        && isStatsIncrement();
+      allow delete: if false;
+    }
+
+    match /makers/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidMaker(request.resource.data);
       allow update, delete: if false;
     }
   }

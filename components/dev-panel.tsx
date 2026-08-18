@@ -120,7 +120,11 @@ export function DevPanel() {
                       {isCapsuleOpen(capsule.openDate) ? "OPEN" : `SEALED ${daysUntilOpen(capsule.openDate)}d`}
                       {" · "}
                       {capsule.photos.length} photos
+                      {capsule.aura ? ` · ${capsule.aura.shape}` : ""}
                     </p>
+                    {capsule.aura ? (
+                      <p className="truncate text-[#78716c]">{capsule.aura.keywords.join(" · ")}</p>
+                    ) : null}
                     {capsule.photos[0] ? (
                       <p className="truncate text-[#78716c]">{capsule.photos[0].path}</p>
                     ) : null}

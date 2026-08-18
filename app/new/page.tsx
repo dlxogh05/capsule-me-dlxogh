@@ -4,13 +4,24 @@ import { FirebaseError } from "firebase/app";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
+import { Atmosphere } from "@/app/components/atmosphere";
+import { KeywordRow, WeatherCapsule } from "@/components/weather-capsule";
+import { useSky } from "@/components/sky-provider";
+import { authErrorMessage, isAuthError, signInWithGoogle } from "@/lib/auth";
+import {
+  formatWeatherLine,
+  type CapsuleAura,
+  type WeatherSnapshot,
+} from "@/lib/capsule-aura";
 import {
   buryCapsule,
   formatOpenDate,
+  isCapsuleOpen,
   type BuriedCapsule,
   type BuryProgress,
 } from "@/lib/capsules";
 import { getFirebaseAuth } from "@/lib/firebase";
+import { fetchCapsuleAura } from "@/lib/seal-client";
 
 function buryErrorMessage(error: unknown) {
   if (error instanceof FirebaseError) {
@@ -53,7 +64,35 @@ function ArrowMark() {
   );
 }
 
+function CapsuleSummary({
+  aura,
+  weather,
+  place,
+  quote,
+}: {
+  aura: CapsuleAura;
+  weather: WeatherSnapshot;
+  place?: string;
+  quote?: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-4 text-center">
+      <WeatherCapsule aura={aura} size="lg" />
+      <p className="text-[11px] font-medium tracking-[0.18em] text-mute uppercase">
+        {formatWeatherLine(weather, place)}
+      </p>
+      {quote ? (
+        <p className="font-serif max-w-[18rem] text-2xl leading-snug tracking-[-0.03em] text-ink">
+          {aura.quote}
+        </p>
+      ) : null}
+      <KeywordRow keywords={aura.keywords} />
+    </div>
+  );
+}
+
 export default function NewCapsulePage() {
+  const sky = useSky();
   const [user, setUser] = useState<User | null>(null);
   const [recipient, setRecipient] = useState("");
   const [letter, setLetter] = useState("");
@@ -61,9 +100,13 @@ export default function NewCapsulePage() {
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [progress, setProgress] = useState<BuryProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [buried, setBuried] = useState<BuriedCapsule | null>(null);
+  const [weather, setWeather] = useState<WeatherSnapshot | null>(null);
+  const [previewAura, setPreviewAura] = useState<CapsuleAura | null>(null);
+  const [place, setPlace] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     return onAuthStateChanged(getFirebaseAuth(), setUser);
@@ -93,71 +136,94 @@ export default function NewCapsulePage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!user) {
-      alert("로그인 먼저!");
-      return;
-    }
-
-    if (pending) {
+    if (pending || signingIn) {
       return;
     }
 
     setError(null);
-    setPending(true);
-    setProgress(
-      files.length > 0
-        ? { phase: "photos", current: 0, total: files.length }
-        : { phase: "document" },
-    );
 
     try {
+      let uid = user?.uid;
+      if (!uid) {
+        setSigningIn(true);
+        try {
+          const credential = await signInWithGoogle();
+          uid = credential.user.uid;
+        } finally {
+          setSigningIn(false);
+        }
+      }
+
+      setPending(true);
+      setProgress({ phase: "aura" });
+
+      const seal = await fetchCapsuleAura({
+        lat: sky?.lat,
+        lon: sky?.lon,
+        place: sky?.place,
+        letter: letter.trim(),
+        recipient: recipient.trim(),
+      });
+
+      setWeather(seal.weather);
+      setPreviewAura(seal.aura);
+      if (seal.place) {
+        setPlace(seal.place);
+      }
+      setProgress(
+        files.length > 0
+          ? { phase: "photos", current: 0, total: files.length }
+          : { phase: "document" },
+      );
+
       const result = await buryCapsule({
-        uid: user.uid,
+        uid,
         recipient: recipient.trim(),
         letter: letter.trim(),
         openDate,
         files,
+        weather: seal.weather,
+        aura: seal.aura,
         onProgress: setProgress,
       });
 
-      console.log({
-        capsuleId: result.id,
-        photos: result.photos,
-      });
       setBuried(result);
     } catch (caught) {
       console.error(caught);
-      setError(buryErrorMessage(caught));
+      setError(isAuthError(caught) ? authErrorMessage(caught) : buryErrorMessage(caught));
     } finally {
+      setSigningIn(false);
       setPending(false);
       setProgress(null);
     }
   }
 
   const progressLabel =
-    progress?.phase === "photos"
-      ? progress.current === 0
-        ? "업로드되는 중"
-        : `사진 올리는 중  ${progress.current} / ${progress.total}`
-      : "캡슐을 저장하는 중";
+    progress?.phase === "aura"
+      ? "그날의 캡슐을 빚는 중"
+      : progress?.phase === "photos"
+        ? progress.current === 0
+          ? "업로드되는 중"
+          : `사진 올리는 중  ${progress.current} / ${progress.total}`
+        : "캡슐을 저장하는 중";
 
   const progressRatio =
-    progress?.phase === "photos" && progress.total > 0
-      ? Math.min(progress.current / progress.total, 1)
-      : progress?.phase === "document"
-        ? 1
-        : 0.12;
+    progress?.phase === "aura"
+      ? 0.22
+      : progress?.phase === "photos" && progress.total > 0
+        ? 0.28 + Math.min(progress.current / progress.total, 1) * 0.5
+        : progress?.phase === "document"
+          ? 1
+          : 0.12;
+
+  const sealed = buried ? !isCapsuleOpen(buried.openDate) : false;
+  const liveWeather = weather ?? sky?.weather ?? null;
+  const liveAura = previewAura ?? sky?.aura ?? null;
+  const livePlace = place ?? sky?.place;
 
   return (
     <main className="relative min-h-[100dvh] overflow-x-hidden bg-canvas px-4 py-10 md:px-8 md:py-16">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed inset-0 -z-10"
-        style={{
-          background:
-            "radial-gradient(70% 50% at 8% 0%, rgb(214 196 168 / 0.45), transparent 58%), radial-gradient(50% 40% at 100% 100%, rgb(196 186 168 / 0.28), transparent 55%)",
-        }}
-      />
+      <Atmosphere />
 
       <div className="mx-auto grid w-full max-w-5xl items-start gap-10 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] md:gap-16">
         <header className="rise pt-4 md:sticky md:top-16 md:pt-10">
@@ -172,9 +238,16 @@ export default function NewCapsulePage() {
           </h1>
           <p className="mt-6 max-w-[22rem] text-[15px] leading-relaxed text-pretty text-mute">
             {buried
-              ? "편지와 사진이 캡슐에 담겼어요. 열람일이 오면 다시 열어 볼 수 있어요."
-              : "받는 사람, 편지, 열람일, 그리고 사진을 담아 타임캡슐로 남겨 두세요."}
+              ? sealed
+                ? "편지는 봉인했어요. 키워드와 그날의 한마디로만 기억해 두세요."
+                : "편지와 사진이 캡슐에 담겼어요. 열람일이 오면 다시 열어 볼 수 있어요."
+              : "받는 사람, 편지, 열람일, 그리고 사진을 담아 타임캡슐로 남겨 두세요. 오늘의 날씨가 캡슐의 빛과 형태가 됩니다."}
           </p>
+          {!buried && liveWeather && liveAura ? (
+            <div className="mt-10 hidden md:block">
+              <CapsuleSummary aura={liveAura} place={livePlace} quote weather={liveWeather} />
+            </div>
+          ) : null}
         </header>
 
         <div className="rise w-full" style={{ animationDelay: "90ms" }}>
@@ -185,6 +258,14 @@ export default function NewCapsulePage() {
                   <div className="flex size-12 items-center justify-center rounded-full bg-[#edf3ec] text-[#346538]">
                     <CheckMark />
                   </div>
+                  {buried.aura && buried.weather ? (
+                    <CapsuleSummary
+                      aura={buried.aura}
+                      place={livePlace}
+                      quote
+                      weather={buried.weather}
+                    />
+                  ) : null}
                   <div>
                     <p className="text-[11px] font-medium tracking-[0.2em] text-mute uppercase">
                       Buried
@@ -196,12 +277,12 @@ export default function NewCapsulePage() {
                       {formatOpenDate(buried.openDate)}
                     </p>
                   </div>
-                  {buried.letter ? (
+                  {!sealed && buried.letter ? (
                     <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-pretty text-ink/80">
                       {buried.letter}
                     </p>
                   ) : null}
-                  {buried.photos.length > 0 ? (
+                  {!sealed && buried.photos.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                       {buried.photos.map((photo) => (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -237,7 +318,21 @@ export default function NewCapsulePage() {
                 </div>
               ) : (
                 <form className="flex flex-col gap-6" onSubmit={handleSubmit}>
-                  <fieldset className="flex flex-col gap-6 disabled:opacity-55" disabled={pending}>
+                  {liveWeather && liveAura ? (
+                    <div className="flex items-center gap-4 rounded-[1.5rem] bg-[#faf8f4] px-4 py-3 md:hidden">
+                      <WeatherCapsule aura={liveAura} size="sm" />
+                      <div className="min-w-0">
+                        <p className="text-[11px] tracking-[0.16em] text-mute uppercase">
+                          Now
+                        </p>
+                        <p className="mt-1 text-sm text-ink">
+                          {formatWeatherLine(liveWeather, livePlace)}
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <fieldset className="flex flex-col gap-6 disabled:opacity-55" disabled={pending || signingIn}>
                     <label className="flex flex-col gap-2 text-[13px] font-medium text-ink/80">
                       받는 사람
                       <input
@@ -308,10 +403,10 @@ export default function NewCapsulePage() {
 
                   <button
                     className="group inline-flex min-h-11 w-full items-center justify-between rounded-full bg-ink px-5 py-3 text-sm font-medium text-white transition duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#2a2623] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-55"
-                    disabled={pending}
+                    disabled={pending || signingIn}
                     type="submit"
                   >
-                    {pending ? "업로드되는 중" : "캡슐 묻기"}
+                    {signingIn ? "로그인 중" : pending ? "업로드되는 중" : "캡슐 묻기"}
                     <span className="flex size-8 items-center justify-center rounded-full bg-white/10">
                       {pending ? (
                         <span className="pulse-soft size-2 rounded-full bg-white" />
@@ -331,16 +426,16 @@ export default function NewCapsulePage() {
         <div
           aria-busy="true"
           aria-live="polite"
-          className="fixed inset-0 z-20 flex items-center justify-center bg-ink/35 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-40 flex items-center justify-center bg-ink/35 px-4 backdrop-blur-sm"
           role="status"
         >
           <div className="w-full max-w-sm rounded-[2rem] border border-white/20 bg-white/92 p-1.5 shadow-[0_24px_80px_-24px_rgb(28_25_23/0.45)]">
             <div className="rounded-[calc(2rem-0.375rem)] bg-white px-7 py-8">
               <p className="text-[11px] font-medium tracking-[0.22em] text-mute uppercase">
-                Uploading
+                Sealing
               </p>
               <p className="mt-3 text-xl font-medium tracking-tight text-ink">
-                업로드되는 중
+                {progress?.phase === "aura" ? "캡슐을 빚는 중" : "업로드되는 중"}
               </p>
               <p className="mt-2 text-sm text-mute">{progressLabel}</p>
               <div className="mt-6 h-1 overflow-hidden rounded-full bg-ink/8">

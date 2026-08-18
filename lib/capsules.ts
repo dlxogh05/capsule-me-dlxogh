@@ -11,7 +11,15 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import {
+  parseAura,
+  parseWeather,
+  type CapsuleAura,
+  type WeatherSnapshot,
+} from "@/lib/capsule-aura";
+import { trackEvent } from "@/lib/analytics";
 import { getFirebaseFirestore, getFirebaseStorage } from "@/lib/firebase";
+import { recordCapsuleBury } from "@/lib/stats";
 
 const MIME_EXTENSION: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -35,6 +43,8 @@ export type CapsuleRecord = {
   photos: CapsulePhoto[];
   ownerUid: string;
   createdAt: Timestamp | null;
+  weather: WeatherSnapshot | null;
+  aura: CapsuleAura | null;
 };
 
 export type BuriedCapsule = {
@@ -43,9 +53,12 @@ export type BuriedCapsule = {
   letter: string;
   openDate: string;
   photos: CapsulePhoto[];
+  weather: WeatherSnapshot | null;
+  aura: CapsuleAura | null;
 };
 
 export type BuryProgress =
+  | { phase: "aura" }
   | { phase: "photos"; current: number; total: number }
   | { phase: "document" };
 
@@ -64,6 +77,8 @@ export async function buryCapsule(input: {
   letter: string;
   openDate: string;
   files: File[];
+  weather: WeatherSnapshot;
+  aura: CapsuleAura;
   onProgress?: (progress: BuryProgress) => void;
 }): Promise<BuriedCapsule> {
   const db = getFirebaseFirestore();
@@ -97,6 +112,19 @@ export async function buryCapsule(input: {
     photos,
     ownerUid: input.uid,
     createdAt: serverTimestamp(),
+    weather: input.weather,
+    aura: input.aura,
+  });
+
+  try {
+    await recordCapsuleBury(input.uid);
+  } catch {
+    // Capsule is already saved; social-proof counts can lag.
+  }
+
+  trackEvent("bury_capsule", {
+    photo_count: photos.length,
+    has_recipient: Boolean(input.recipient),
   });
 
   return {
@@ -105,6 +133,8 @@ export async function buryCapsule(input: {
     letter: input.letter,
     openDate: input.openDate,
     photos,
+    weather: input.weather,
+    aura: input.aura,
   };
 }
 
@@ -138,6 +168,8 @@ export function parseCapsule(id: string, data: DocumentData): CapsuleRecord & { 
     photos: parsePhotos(data.photos),
     ownerUid: typeof data.ownerUid === "string" ? data.ownerUid : "",
     createdAt: data.createdAt ?? null,
+    weather: parseWeather(data.weather),
+    aura: parseAura(data.aura),
   };
 }
 

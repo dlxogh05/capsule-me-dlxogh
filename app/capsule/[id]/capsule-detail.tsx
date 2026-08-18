@@ -4,6 +4,8 @@ import { onAuthStateChanged } from "firebase/auth";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Atmosphere } from "@/app/components/atmosphere";
+import { KeywordRow, WeatherCapsule } from "@/components/weather-capsule";
+import { formatWeatherLine } from "@/lib/capsule-aura";
 import {
   daysUntilOpen,
   formatOpenDate,
@@ -124,27 +126,36 @@ export function CapsuleDetail({ id }: { id: string }) {
 
         {status === "ready" && capsule ? (
           <article className="rise mt-8 grid items-start gap-8 md:mt-12 md:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] md:gap-12">
-            <div className="relative min-h-[22rem] overflow-hidden rounded-[2rem] bg-[#ece7de] md:min-h-[32rem]">
-              {cover ? (
+            <div
+              className="relative min-h-[22rem] overflow-hidden rounded-[2rem] md:min-h-[32rem]"
+              style={{
+                background: capsule.aura
+                  ? `radial-gradient(80% 70% at 50% 22%, ${capsule.aura.glow}, ${capsule.aura.fill}40 55%, #ece7de)`
+                  : "#ece7de",
+              }}
+            >
+              {revealed && cover ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   alt=""
-                  className={`absolute inset-0 size-full object-cover ${
-                    revealed ? "" : "blur-xl scale-110"
-                  }`}
+                  className="absolute inset-0 size-full object-cover"
                   src={cover}
                 />
               ) : null}
               {!revealed ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-ink/35 px-6 text-center text-white">
-                  <span className="flex size-14 items-center justify-center rounded-full bg-white/12">
-                    <LockMark />
-                  </span>
-                  <p className="mt-5 text-[11px] tracking-[0.2em] uppercase">Sealed</p>
-                  <p className="font-serif mt-3 text-4xl tracking-[-0.04em]">
+                <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
+                  {capsule.aura ? (
+                    <WeatherCapsule aura={capsule.aura} size="lg" />
+                  ) : (
+                    <span className="flex size-14 items-center justify-center rounded-full bg-white/12 text-ink">
+                      <LockMark />
+                    </span>
+                  )}
+                  <p className="mt-5 text-[11px] tracking-[0.2em] text-ink/50 uppercase">Sealed</p>
+                  <p className="font-serif mt-3 text-4xl tracking-[-0.04em] text-ink">
                     {daysUntilOpen(capsule.openDate)}일 뒤에 열려요
                   </p>
-                  <p className="mt-3 text-sm text-white/75">
+                  <p className="mt-3 text-sm text-mute">
                     {formatOpenDate(capsule.openDate)}
                   </p>
                 </div>
@@ -160,6 +171,20 @@ export function CapsuleDetail({ id }: { id: string }) {
                   {capsule.recipient || "이름 없는 캡슐"}
                 </h1>
                 <p className="mt-4 text-sm text-mute">{formatOpenDate(capsule.openDate)}</p>
+                {capsule.weather ? (
+                  <p className="mt-2 text-sm text-mute">{formatWeatherLine(capsule.weather)}</p>
+                ) : null}
+
+                {capsule.aura ? (
+                  <div className="mt-6">
+                    <p className="font-serif text-2xl leading-snug tracking-[-0.03em] text-ink">
+                      {capsule.aura.quote}
+                    </p>
+                    <div className="mt-4">
+                      <KeywordRow keywords={capsule.aura.keywords} />
+                    </div>
+                  </div>
+                ) : null}
 
                 {revealed && capsule.letter ? (
                   <p className="mt-8 whitespace-pre-wrap text-[17px] leading-relaxed text-pretty text-ink/85">
@@ -169,7 +194,7 @@ export function CapsuleDetail({ id }: { id: string }) {
 
                 {!revealed ? (
                   <p className="mt-8 text-[15px] leading-relaxed text-mute">
-                    편지는 열람일이 되어야 펼쳐져요. 그전까지는 표지만 남겨 두었어요.
+                    편지는 열람일이 되어야 펼쳐져요. 그전까지는 키워드와 그날의 한마디만 보여 두었어요.
                   </p>
                 ) : null}
 

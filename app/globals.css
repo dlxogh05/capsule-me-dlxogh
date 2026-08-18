@@ -57,6 +57,16 @@ body {
   }
 }
 
+@keyframes capsule-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+
 .rise {
   animation: rise 800ms var(--ease-apple) both;
 }
@@ -69,10 +79,15 @@ body {
   animation: pulse-soft 1.8s var(--ease-apple) infinite;
 }
 
+.capsule-float {
+  animation: capsule-float 4.6s var(--ease-apple) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rise,
   .shimmer-bar,
-  .pulse-soft {
+  .pulse-soft,
+  .capsule-float {
     animation: none;
   }
 }
