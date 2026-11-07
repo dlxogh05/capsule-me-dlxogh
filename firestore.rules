@@ -19,6 +19,19 @@ rules_version = '2';
 //
 // Access: owner can create and read. No client updates or deletes.
 //
+// Subcollection: capsules/{capsuleId}/sealed  (doc id: 'content')
+// Fields:
+//   - ownerUid: string (required) - duplicated so read checks need no get()
+//   - openDate: string (required) - duplicated for the same reason
+//   - letter: string (0-5000)     ← the sealed body
+//   - photos: list of maps { path, url }  ← the sealed body
+//
+// Access: owner may create once. Read is allowed ONLY on/after openDate
+// (KST midnight). Before that the rules refuse the read, so the letter and
+// photos never reach the browser at all — the lock is enforced here, not in
+// the UI. Capsules buried before 2026-08-27 keep their body on the parent
+// document and are NOT sealed.
+//
 // Collection: stats
 // Document ID: public
 // Fields:
@@ -145,6 +158,25 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    // openDate(YYYY-MM-DD)는 KST 자정 기준. request.time은 UTC이므로 9시간을 뺀다.
+    function isUnsealed(openDate) {
+      return openDate.size() == 0
+        || request.time >= timestamp.date(
+             int(openDate[0:4]), int(openDate[5:7]), int(openDate[8:10])
+           ) - duration.value(9, 'h');
+    }
+
+    function isValidSealed(data) {
+      return data.keys().hasOnly(['ownerUid', 'openDate', 'letter', 'photos'])
+        && data.ownerUid is string
+        && data.ownerUid == request.auth.uid
+        && data.openDate is string
+        && (data.openDate.size() == 0 || data.openDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))
+        && data.letter is string
+        && data.letter.size() <= 5000
+        && photosAreValid(data.photos);
+    }
+
     function isValidCapsule(data) {
       return data.keys().hasOnly(['recipient', 'letter', 'openDate', 'photos', 'ownerUid', 'createdAt', 'weather', 'aura'])
         && data.recipient is string
@@ -164,6 +196,16 @@ service cloud.firestore {
     match /capsules/{capsuleId} {
       allow read: if isAuthenticated() && isOwner(resource.data.ownerUid);
       allow create: if isAuthenticated() && isValidCapsule(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    match /capsules/{capsuleId}/sealed/{sealedId} {
+      allow read: if isAuthenticated()
+        && isOwner(resource.data.ownerUid)
+        && isUnsealed(resource.data.openDate);
+      allow create: if isAuthenticated()
+        && sealedId == 'content'
+        && isValidSealed(request.resource.data);
       allow update, delete: if false;
     }
 

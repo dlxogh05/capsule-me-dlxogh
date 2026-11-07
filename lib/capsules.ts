@@ -5,8 +5,8 @@ import {
   getDocs,
   query,
   serverTimestamp,
-  setDoc,
   where,
+  writeBatch,
   type DocumentData,
   type Timestamp,
 } from "firebase/firestore";
@@ -30,6 +30,9 @@ const MIME_EXTENSION: Record<string, string> = {
   "image/heic": "heic",
   "image/heif": "heif",
 };
+
+const SEALED_COLLECTION = "sealed";
+const SEALED_DOC = "content";
 
 export type CapsulePhoto = {
   path: string;
@@ -105,16 +108,26 @@ export async function buryCapsule(input: {
 
   input.onProgress?.({ phase: "document" });
 
-  await setDoc(capsuleRef, {
+  // D5 — 잠긴 동안 letter/photos가 브라우저에 도착하지 않게 본문을 하위문서로 분리한다.
+  // 열람 가부는 앱이 아니라 Firestore 규칙이 판정한다 (firestore.rules의 isUnsealed).
+  const batch = writeBatch(db);
+  batch.set(capsuleRef, {
     recipient: input.recipient,
-    letter: input.letter,
+    letter: "",
     openDate: input.openDate,
-    photos,
+    photos: [],
     ownerUid: input.uid,
     createdAt: serverTimestamp(),
     weather: input.weather,
     aura: input.aura,
   });
+  batch.set(doc(capsuleRef, SEALED_COLLECTION, SEALED_DOC), {
+    ownerUid: input.uid,
+    openDate: input.openDate,
+    letter: input.letter,
+    photos,
+  });
+  await batch.commit();
 
   try {
     await recordCapsuleBury(input.uid);
@@ -215,13 +228,34 @@ export function daysUntilOpen(openDate: string, now = new Date()) {
 }
 
 export async function getCapsule(id: string): Promise<(CapsuleRecord & { id: string }) | null> {
-  const snapshot = await getDoc(doc(getFirebaseFirestore(), "capsules", id));
+  const capsuleRef = doc(getFirebaseFirestore(), "capsules", id);
+  const snapshot = await getDoc(capsuleRef);
 
   if (!snapshot.exists()) {
     return null;
   }
 
-  return parseCapsule(snapshot.id, snapshot.data());
+  const capsule = parseCapsule(snapshot.id, snapshot.data());
+
+  await mergeSealed(capsule);
+  return capsule;
+}
+
+// 열람일 전이면 규칙이 이 읽기를 거부한다 — 그게 잠금이다.
+// 2026-08-27 이전에 묻힌 캡슐은 본문이 아직 상위 문서에 있어 그대로 살아 있다(레거시 폴백).
+async function mergeSealed(capsule: CapsuleRecord & { id: string }) {
+  try {
+    const sealed = await getDoc(
+      doc(getFirebaseFirestore(), "capsules", capsule.id, SEALED_COLLECTION, SEALED_DOC),
+    );
+    if (sealed.exists()) {
+      const data = sealed.data();
+      capsule.letter = typeof data.letter === "string" ? data.letter : capsule.letter;
+      capsule.photos = parsePhotos(data.photos);
+    }
+  } catch {
+    // 규칙이 거부 = 아직 잠김. letter는 "", photos는 [] 로 둔다.
+  }
 }
 
 export async function listMyCapsules(uid: string) {
@@ -229,7 +263,13 @@ export async function listMyCapsules(uid: string) {
     query(collection(getFirebaseFirestore(), "capsules"), where("ownerUid", "==", uid)),
   );
 
-  return snapshot.docs
+  const capsules = snapshot.docs
     .map((item) => parseCapsule(item.id, item.data()))
     .sort((left, right) => (right.createdAt?.toMillis() ?? 0) - (left.createdAt?.toMillis() ?? 0));
+
+  await Promise.all(
+    capsules.filter((capsule) => isCapsuleOpen(capsule.openDate)).map(mergeSealed),
+  );
+
+  return capsules;
 }
